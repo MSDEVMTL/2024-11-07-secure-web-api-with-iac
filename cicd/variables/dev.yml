@@ -1,0 +1,16 @@
+variables:
+  azureSubscription: 'AzureDevOps' # Nom de la service connection dans Azure DevOps
+  aspNetCoreEnvironment: 'Production'
+  azureDevOpsAppId: 'TODO:FILL' # Enterprise application object id
+  subscriptionId: 'TODO:FILL' # Id de l'abonnement Azure
+  tenantId: 'TODO:FILL' # Id du locataire Azure
+  azure_instance: 'https://TODO:FILL'
+  environmentName: 'dev'  
+  sku: 'basic'
+  skuCode: 'B1'
+  administratorLogin: 'sqladmin'
+  sqlServerName: 'sql-$(projectName)-$(environmentName)'
+  sqlDBName: 'sqldb-$(projectName)-$(environmentName)'
+  dboPasswordSecretName: 'dboPassword'
+
+

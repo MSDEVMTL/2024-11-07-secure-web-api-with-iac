@@ -1,0 +1,243 @@
+  parameters:
+  - name: 'environment'
+    type: 'string'
+    default: 'dev'
+    values:
+      - 'dev'
+
+  jobs:
+      - deployment: 'Deployment'
+        environment: '${{ parameters.environment }}'
+        pool:
+          vmImage: windows-latest
+        variables: 
+          - template: variables/${{ parameters.environment }}.yml
+          - template: variables/common.yml
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current  
+                - task: replacetokens@5
+                  inputs:
+                    rootDirectory: '$(pipeline.workspace)\drop'
+                    targetFiles: |
+                      *.txt
+                      **/*.bicepparam
+                    encoding: 'auto'
+                    tokenPattern: 'custom'
+                    tokenPrefix: '#{'
+                    tokenSuffix: '}#'
+                    writeBOM: false
+                    actionOnMissing: 'warn'
+                    keepToken: true
+                    actionOnNoFiles: 'continue'
+                    enableTransforms: false
+                    enableRecursion: false
+                    useLegacyPattern: false
+                    enableTelemetry: true  
+
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    scriptType: 'pscore'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                        cd $(pipeline.workspace)\drop\Infrastructure
+                        az group create --name ${{ variables.resourceGroupName }} --location ${{ variables.location }}
+                  displayName: 'Create Resource Group ${{ variables.resourceGroupName }}'
+
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    scriptType: 'pscore'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      cd $(pipeline.workspace)\drop\Infrastructure
+                      $deploymentName='todoapi-keyvault-'+$(Get-Date -Format "yyyyMMddHHmm")
+                      az deployment group create --name $deploymentName --resource-group ${{ variables.resourceGroupName }} --template-file .\keyvault.bicep --parameters .\keyvault.bicepparam 
+                  displayName: 'Create keyvault ${{ variables.keyVaultName }}'
+
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    scriptType: 'pscore'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      Write-Host "Create a new dbo password and store it in the keyvault"
+                      $secretExists = (az keyvault secret list --vault-name ${{ variables.keyVaultName }} -o tsv)
+                      if ($secretExists -eq $null) {
+                          $value = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 20 | ForEach-Object {[char]$_})
+                          az keyvault secret set --vault-name ${{ variables.keyVaultName }} --name 'dboPassword' --value $value -o none
+                          Write-Host "Secret created"
+                      }
+                      else {
+                          Write-Host "Secret already exists"
+                      }
+                  displayName: 'Set keyvault secrets for local db'
+
+                - task: AzureKeyVault@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    KeyVaultName: '${{ variables.keyVaultName }}'
+                    SecretsFilter: '*'
+                    RunAsPreJob: false
+                  displayName: 'Get keyvault secrets'
+
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    scriptType: 'pscore'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      cd $(pipeline.workspace)\drop\App
+                      # check if the app registration exists
+                      Write-Host "Check if the app registration exists"
+                      $appReg=$(az ad app list --display-name ${{ variables.webApiName }} --query '[0].appId' -o tsv 2> $null)
+                      if (-not $appReg) {
+                        # create the app registration if it does not exist
+                        $appReg=$(az ad app create --display-name ${{ variables.webApiName }} --required-resource-accesses .\manifestGraphRead.json | ConvertFrom-Json).appId
+                      }
+                      else {
+                        Write-Host "App registration already exists"
+                      }
+                      Write-Host "##vso[task.setvariable variable=appRegId]$appReg"
+
+                      # set identifierUris
+                      $identifierUris=$(az ad app show --id $appReg --query 'identifierUris' -o json 2> $null) | convertfrom-json
+                      if ($identifierUris.count -eq 0) {
+                        Write-Host "Set identifierUris"
+                        az ad app update --id $appReg --identifier-uris "api://${appReg}"
+                      }
+                      else {
+                        Write-Host "IdentifierUris already exist"
+                      }
+                      # set api scopes
+                      $apiScopes=$(az ad app show --id $appReg --query 'api' -o json 2> $null) | convertfrom-json
+                      if ($apiScopes.oauth2PermissionScopes.count -eq 0) {
+                        Write-Host "Set api scopes"
+                        az ad app update --id $appReg --set api=@manifestAPI.json
+                      }
+                      else {
+                        Write-Host "Api scopes already exist"
+                      }
+                      # add app roles
+                      $appRoles=$(az ad app show --id $appReg --query 'appRoles' -o json 2> $null) | convertfrom-json
+                      if ($appRoles.count -eq 0) {
+                        Write-Host "Set app roles"
+                        az ad app update --id $appReg --app-roles .\manifestRoles.json
+                      }
+                      else {
+                        Write-Host "App roles already exist"
+                      }
+                      # create a service principal
+                      $sp=$(az ad sp list --display-name ${{ variables.webApiName }} --query '[0].appId' -o tsv 2> $null)
+                      if (-not $sp) {
+                        Write-Host "Create a service principal"
+                        $sp=$(az ad sp create-for-rbac --display-name ${{ variables.webApiName }} --query 'appId' -o tsv)
+                      }
+                      else {
+                        Write-Host "Service principal already exists"
+                      }
+                  displayName: 'Create api app registration'
+
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    scriptType: 'pscore'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      cd $(pipeline.workspace)\drop\Infrastructure
+                      Write-Host "Deploy Web Api"
+                      $deploymentName='todoapi-webapi-'+$(Get-Date -Format "yyyyMMddHHmm")
+                      az deployment group create --name $deploymentName --resource-group ${{ variables.resourceGroupName }} --template-file .\app.bicep --parameters .\app.bicepparam
+                      Write-Host "Add Identity to web app"
+                      $webAppIdentiry=$(az webapp identity assign --resource-group ${{ variables.resourceGroupName }} --name $(webApiName)) | ConvertFrom-Json
+                      Write-Host "PrincipalId => $($webAppIdentiry.principalId)"
+                      az keyvault set-policy --name ${{ variables.keyVaultName }} --object-id $webAppIdentiry.principalId --secret-permissions get list
+                  displayName: 'Create Web Api $(webApiName)'
+
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    scriptType: 'pscore'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      cd $(pipeline.workspace)\drop\Infrastructure
+                      Write-Host "Deploy database server and db"
+                      $deploymentName='todoapi-database-'+$(Get-Date -Format "yyyyMMddHHmm")
+                      az deployment group create --name $deploymentName --resource-group ${{ variables.resourceGroupName }} --template-file .\database.bicep --parameters .\database.bicepparam 
+
+                      Write-Host "Get Fully Qualified Name of DB server for when we deploy"
+                      $sqlServer = az sql server list --resource-group ${{ variables.resourceGroupName }} | convertfrom-json
+                      Write-Host "Create Variable with value"
+                      Write-Host "##vso[task.setvariable variable=sqlServerFQDN;]$($sqlServer.fullyQualifiedDomainName)"
+                      $sqlServerConnectionString="Data Source=$($sqlServer.fullyQualifiedDomainName);Initial Catalog=${{ variables.sqlDBName }};User ID=${{ variables.administratorLogin }};Password=$(dboPassword);Connect Timeout=60;Encrypt=True;Trust Server Certificate=False;Application Intent=ReadWrite;Multi Subnet Failover=False"
+                      az keyvault secret set --vault-name ${{ variables.keyVaultName }} --name ToDoConn --value $sqlServerConnectionString
+                  displayName: 'Create DB Server $(sqlServerName) and DB $(sqlDBName)'
+
+                - task: AzureRmWebAppDeployment@4
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    appType: 'webApp'
+                    WebAppName: '$(webApiName)'
+                    package: '$(pipeline.workspace)\drop\App\TodoListAPI.zip'
+                    enableCustomDeployment: true
+                    DeploymentType: 'webDeploy' #zipDeploy
+                    RemoveAdditionalFilesFlag: true
+                  displayName: 'Deploy $(webApiName) to Azure'
+
+                - task: SqlAzureDacpacDeployment@1
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    AuthenticationType: 'server'
+                    ServerName: '$(sqlServerFQDN)'
+                    DatabaseName: '$(sqlDBName)'
+                    SqlUsername: '$(administratorLogin)'
+                    SqlPassword: '$(dboPassword)'
+                    deployType: 'DacpacTask'
+                    DeploymentAction: 'Publish'
+                    DacpacFile: '$(pipeline.workspace)\drop\DB\TodoDB.dacpac'
+                    IpDetectionMethod: 'AutoDetect'
+                  displayName: 'Deploy $(sqlDBName) to Azure'
+
+
+                - task: AzureAppServiceSettings@1
+                  displayName: 'Deploy Appsettings'
+                  inputs:
+                    azureSubscription: '${{ variables.azureSubscription }}'
+                    appName: '$(webApiName)'
+                    resourceGroupName: '$(resourceGroupName)'
+                    appSettings: |
+                      [
+                        {
+                          "name": "ASPNETCORE_ENVIRONMENT",
+                          "value": "${{ variables.aspNetCoreEnvironment }}",
+                          "slotSetting": false
+                        },
+                        {
+                          "name":  "AZURE_TENANT_ID",
+                          "value": "${{ variables.tenantId }}",
+                          "slotSetting": false
+                        },
+                        {
+                          "name":  "AZURE_CLIENT_ID",
+                          "value": "$(appRegId)",
+                          "slotSetting": false
+                        },
+                        {
+                          "name":  "AZURE_AD_INSTANCE",
+                          "value": "${{ variables.azure_instance }}",
+                          "slotSetting": false
+                        }
+                      ]
+                    connectionStrings: |
+                      [
+                        {
+                          "name": "ToDos",
+                          "value": "@Microsoft.KeyVault(VaultName=${{ variables.keyVaultName }};SecretName=ToDoConn)",
+                          "type": "SQLServer",
+                          "slotSetting": false
+                        }
+                      ]

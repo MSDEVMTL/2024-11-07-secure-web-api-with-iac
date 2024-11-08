@@ -1,0 +1,28 @@
+{
+  "acceptMappedClaims": null,
+  "knownClientApplications": [],
+  "oauth2PermissionScopes": [
+    {
+      "adminConsentDescription": "Allow the app to read and write the user's ToDo list using the 'ToDoListApi'",
+      "adminConsentDisplayName": "Read and write users ToDo list using the 'ToDoListApi'",
+      "id": "3724d28f-295e-4012-9f8a-cf6ec73969d6",
+      "isEnabled": true,
+      "type": "Admin",
+      "userConsentDescription": null,
+      "userConsentDisplayName": null,
+      "value": "ToDoList.ReadWrite"
+    },
+    {
+      "adminConsentDescription": "Allow the app to read the user's ToDo list using the 'TodoListApi'.",
+      "adminConsentDisplayName": "Read users ToDo list using the 'TodoListApi'",
+      "id": "1020e2c7-0007-4724-9ef8-48b82c079fa1",
+      "isEnabled": true,
+      "type": "Admin",
+      "userConsentDescription": null,
+      "userConsentDisplayName": null,
+      "value": "ToDoList.Read"
+    }
+  ],
+  "preAuthorizedApplications": [],
+  "requestedAccessTokenVersion": 2
+}

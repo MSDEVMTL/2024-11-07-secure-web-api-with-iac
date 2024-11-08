@@ -1,0 +1,7 @@
+variables:
+  location: 'canadacentral' # Emplacement des ressources
+  projectName: 'todoapi' # Nom du projet
+  resourceGroupName: 'infrastructure-$(projectName)-$(environmentName)' # Nom du groupe de ressources
+  keyvaultName: 'kv-$(projectName)-$(environmentName)' # Nom du coffre de secrets
+  webApiName: 'webapi-$(projectName)-$(environmentName)' # Nom de l'application web
+  

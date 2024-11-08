@@ -1,0 +1,62 @@
+   jobs:
+      - job: 'JobBuild'
+        pool:
+          vmImage: windows-latest
+
+        steps:
+        - task: NuGetToolInstaller@1
+
+        - task: NuGetCommand@2
+          inputs:
+            restoreSolution: '**\*.sln'
+          displayName: 'Restore nuget packages'
+
+        - task: VSBuild@1
+          inputs: 
+            solution: '**\TodoListAPI\TodoListAPI.csproj'
+            msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(Build.ArtifactStagingDirectory)\App"'
+            configuration: 'Release'
+            platform: 'Any CPU'
+          displayName: 'Build Web Api'
+
+        - task: VSBuild@1
+          inputs: 
+            solution: '**\TodoDB\TodoDB.sqlproj'
+            msbuildArgs: '/p:OutputPath="$(Build.ArtifactStagingDirectory)\DB"'
+            configuration: 'Release'
+            platform: 'Any CPU'
+          displayName: 'Build Web DB'
+
+        - powershell: |
+            Write-Host "Copy manifest files"
+            Copy-Item $(build.sourcesdirectory)\TodoListAPI\manifest*.* $(Build.ArtifactStagingDirectory)\App -Recurse -Force
+          displayName: 'Copy manifest Files'
+
+        - powershell: |
+            Write-Host "Validate keyvault bicep files"
+            az bicep build --file $(build.sourcesdirectory)\Infrastructure\keyvault.bicep --outfile keyvault.json --verbose
+            az bicep build-params --file $(build.sourcesdirectory)\Infrastructure\keyvault.bicepparam --outfile keyvault.params.json --verbose
+
+            Write-Host "Validate web api bicep files"
+            az bicep build --file $(build.sourcesdirectory)\Infrastructure\app.bicep --outfile website.json --verbose
+            az bicep build-params --file $(build.sourcesdirectory)\Infrastructure\app.bicepparam --outfile app.params.json --verbose
+
+            Write-Host "Validate db bicep files"
+            az bicep build --file $(build.sourcesdirectory)\Infrastructure\database.bicep --outfile db.json --verbose
+            az bicep build-params --file $(build.sourcesdirectory)\Infrastructure\database.bicepparam --outfile db.params.json --verbose
+          displayName: 'Validate Bicep Files'
+
+        - powershell: |              
+            Write-Host "Create Infrastructure Folder"
+            New-Item -Path $(Build.ArtifactStagingDirectory)\Infrastructure -ItemType Directory
+            Write-Host "Copy Bicep Files"
+            Copy-Item $(build.sourcesdirectory)\Infrastructure\keyvault.* $(Build.ArtifactStagingDirectory)\Infrastructure -Force
+            Copy-Item $(build.sourcesdirectory)\Infrastructure\app.* $(Build.ArtifactStagingDirectory)\Infrastructure -Force
+            Copy-Item $(build.sourcesdirectory)\Infrastructure\database.* $(Build.ArtifactStagingDirectory)\Infrastructure -Force
+          displayName: 'Copy Bicep Files'
+        
+        - task: PublishBuildArtifacts@1
+          inputs:
+            PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+            ArtifactName: 'drop'
+            publishLocation: 'Container'

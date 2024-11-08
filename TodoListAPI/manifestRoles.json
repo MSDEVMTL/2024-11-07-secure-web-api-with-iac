@@ -1,0 +1,24 @@
+[
+  {
+    "allowedMemberTypes": [
+      "Application"
+    ],
+    "description": "Allow the app to read and write every user's ToDo list using the 'ToDoListApi'",
+    "displayName": "ToDoList.ReadWrite.Al",
+    "id": "3af4d222-f810-4a89-ba31-d32330507f67",
+    "isEnabled": true,
+    "origin": "Application",
+    "value": "ToDoList.ReadWrite.Al"
+  },
+  {
+    "allowedMemberTypes": [
+      "Application"
+    ],
+    "description": "Allow the app to read every user's ToDo list using the 'TodoListApi'",
+    "displayName": "ToDoList.Read.All",
+    "id": "5420b3e4-16fe-4545-a509-84a65378e3fb",
+    "isEnabled": true,
+    "origin": "Application",
+    "value": "ToDoList.Read.All"
+  }
+]

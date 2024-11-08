@@ -1,0 +1,19 @@
+name: $(Date:yyyy.MM.dd)$(Rev:.r)
+
+trigger:
+  branches:
+    include:
+      - main
+
+stages:
+  - stage: 
+    displayName: 'Build'
+    jobs:
+      - template: build.yml
+
+  - stage: 
+    displayName: 'Deployment Dev'
+    jobs:
+      - template: release.yml
+        parameters:
+          environment: 'dev'
